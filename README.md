@@ -203,7 +203,7 @@ LONGITUD = -84.00004424
 
 Esta coordenada representa el punto que posteriormente se utiliza como referencia para obtener la imagen satelital correspondiente.
 
-![Imagen satelital](docs/tabla_promedio.pgn)
+![Imagen tabla](docs/tabla_promedio.png)
 
 ---
 
