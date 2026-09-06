@@ -1,5 +1,5 @@
 
-# Sistema de estimación de parámetros geométricos de una vía
+# SEAC: Sistema de estimación de parámetros geométricos de una calle 
 
 ## Descripción
 
@@ -15,17 +15,17 @@ Actualmente, el desarrollo se divide en varias etapas:
 
 ```text
 ┌──────────────────────┐
-│      NEO-6M GPS     │
+│      NEO-6M GPS      │
 └──────────┬───────────┘
            │
            │ Datos NMEA
            ▼
 ┌──────────────────────┐
-│       Arduino        │
+│       Python Rpi4    │
 │                      │
 │ Validación de datos  │
 │ GPS + satélites      │
-│ + HDOP                │
+│ + HDOP               │
 └──────────┬───────────┘
            │
            │ 10 mediciones válidas
@@ -70,25 +70,18 @@ La arquitectura final incorporará además una cámara para utilizar informació
 
 ## Hardware
 
-Para la adquisición de las coordenadas se utiliza un módulo **NEO-6M GPS**, conectado a un Arduino UNO mediante comunicación serial.
+Para la adquisición de las coordenadas se utiliza un módulo **NEO-6M GPS**, conectado a la RaspBerry pi 4 mediante comunicación serial.
 
 La conexión utilizada actualmente es:
 
-| Componente   |        Arduino |
+| Componente   |        Rpi4    |
 | ------------ | -------------: |
-| NEO-6M TX    |          Pin 4 |
-| NEO-6M RX    |          Pin 3 |
+| NEO-6M TX    |          Pin RX|
+| NEO-6M RX    |          Pin TX|
 | Baud rate    |           9600 |
 | Comunicación | SoftwareSerial |
 
-El Arduino se encarga de recibir continuamente las sentencias NMEA generadas por el módulo GPS y procesarlas mediante la biblioteca `TinyGPS++`.
-
-### Bibliotecas utilizadas
-
-```cpp
-#include <SoftwareSerial.h>
-#include <TinyGPS++.h>
-```
+La Rpi4 se encarga de recibir continuamente las sentencias NMEA generadas por el módulo GPS y procesarlas mediante la biblioteca `pymea2`.
 
 ---
 
@@ -160,48 +153,79 @@ y detiene la adquisición.
 
 ---
 
-# Etapa 2 — Procesamiento de los datos en Python
+# Etapa 2 — Procesamiento de los datos GPS
 
 Una vez obtenidas las mediciones GPS, los datos son procesados mediante **Python**.
 
-El objetivo de esta etapa es determinar una posición representativa de la ubicación donde se realizó la captura.
+Esta etapa se encuentra implementada en el módulo:
 
-En lugar de utilizar directamente una única medición, se utilizan las 10 mediciones obtenidas para calcular diferentes parámetros estadísticos.
+```text
+gps.py
+```
 
-Entre los parámetros considerados se encuentran:
+El objetivo de esta etapa es validar las mediciones obtenidas y determinar una posición representativa de la ubicación donde se realizó la captura.
 
+En lugar de utilizar directamente una única medición, el sistema procesa el conjunto de mediciones almacenadas en el archivo de entrada.
+
+Cada registro GPS contiene:
+
+```text
+GPS,número,latitud,longitud,satélites,HDOP
+```
+
+El módulo verifica que las coordenadas sean válidas antes de utilizarlas.
+
+---
+
+# Análisis de las mediciones GPS
+
+A partir de las mediciones válidas se calculan diferentes parámetros que permiten conocer la posición representativa y la dispersión de los datos.
+
+Actualmente se calculan:
+
+* Cantidad de mediciones válidas.
 * Latitud promedio.
 * Longitud promedio.
-* Valor mínimo de latitud.
-* Valor máximo de latitud.
-* Valor mínimo de longitud.
-* Valor máximo de longitud.
-* Dispersión de las coordenadas.
-* Desviación de las mediciones.
-* Número de satélites.
-* Valores de HDOP.
+* Latitud mínima.
+* Latitud máxima.
+* Longitud mínima.
+* Longitud máxima.
+* Desviación estándar de la latitud.
+* Desviación estándar de la longitud.
+* Rango de latitud expresado en metros.
+* Rango de longitud expresado en metros.
+* Distancia de cada medición con respecto a la coordenada promedio.
+* Distancia promedio con respecto al punto promedio.
+* Distancia máxima con respecto al punto promedio.
 
-El uso de múltiples mediciones permite analizar qué tan concentradas se encuentran las posiciones obtenidas por el GPS.
+El archivo de entrada también contiene el número de satélites y el valor HDOP de cada medición. Estos datos son leídos y almacenados por el módulo GPS, aunque actualmente no son utilizados para calcular la coordenada promedio.
 
 ---
 
 # Coordenada promedio
 
-A partir de las mediciones válidas se calcula una coordenada representativa:
+A partir de las mediciones válidas se obtiene una coordenada representativa mediante:
 
 ```text
 Latitud promedio
 Longitud promedio
 ```
 
-Actualmente, para las pruebas de obtención de imágenes satelitales se utiliza como ejemplo:
+El proceso puede representarse de la siguiente manera:
 
-```python
-LATITUD = 9.92600040
-LONGITUD = -84.00004424
+```text
+Mediciones GPS
+      ↓
+Validación
+      ↓
+Latitudes y longitudes válidas
+      ↓
+Promedio
+      ↓
+Coordenada representativa
 ```
 
-Esta coordenada representa el punto que posteriormente se utiliza como referencia para obtener la imagen satelital correspondiente.
+Esta coordenada se utiliza posteriormente como referencia para obtener la imagen satelital correspondiente.
 
 ![Imagen tabla](docs/tabla_promedio.png)
 
@@ -209,7 +233,13 @@ Esta coordenada representa el punto que posteriormente se utiliza como referenci
 
 # Etapa 3 — Obtención de imágenes satelitales
 
-Una vez determinada la coordenada promedio, Python utiliza la latitud y longitud para localizar la zona correspondiente dentro de un sistema de teselas (*tiles*).
+Una vez determinada la coordenada promedio, el sistema utiliza la latitud y longitud para localizar la región correspondiente dentro del sistema de teselas de Esri.
+
+Esta etapa se encuentra implementada en el módulo:
+
+```text
+esri.py
+```
 
 La fuente utilizada actualmente es:
 
@@ -227,11 +257,9 @@ ArcGIS World_Imagery
 
 # ¿Qué es una tesela?
 
-Una imagen satelital de una región grande no necesariamente se descarga como una única imagen.
+Los servicios de mapas dividen las imágenes del planeta en pequeñas imágenes cuadradas denominadas **teselas** (*tiles*).
 
-Los servicios de mapas dividen el planeta en pequeñas imágenes cuadradas llamadas **teselas** (*tiles*).
-
-Cada tesela tiene actualmente:
+Cada tesela utilizada por el sistema tiene:
 
 ```text
 256 × 256 píxeles
@@ -245,49 +273,43 @@ Y → posición vertical
 Z → nivel de zoom
 ```
 
-Por ejemplo:
+El nivel de zoom determina el nivel de detalle de la imagen.
+
+A mayor valor de `zoom`, mayor nivel de detalle y menor área geográfica representada por cada tesela.
+
+Actualmente el valor predeterminado es:
 
 ```text
 Zoom = 19
-X = ...
-Y = ...
 ```
-
-El nivel de zoom determina el nivel de detalle de las imágenes.
-
-A mayor `ZOOM`, mayor nivel de detalle y menor área geográfica cubierta por cada tesela.
 
 ---
 
-# Conversión de coordenadas GPS a teselas
+# Conversión de coordenadas GPS
 
-Para obtener las teselas correspondientes a una coordenada geográfica, primero se transforma:
+Para determinar qué parte del mapa corresponde a la coordenada GPS promedio, el sistema transforma la posición geográfica utilizando la proyección **Web Mercator**.
+
+El proceso es:
 
 ```text
 Latitud / Longitud
         ↓
-Coordenadas de píxel global
+Web Mercator
         ↓
-Coordenadas de tesela
+Píxel global
+        ↓
+Tesela X/Y
 ```
-
-La transformación utiliza la proyección Web Mercator.
 
 La función:
 
 ```python
-latlon_a_pixel()
+latlon_a_pixel_global()
 ```
 
-convierte la latitud y longitud a coordenadas de píxel globales.
+convierte la latitud y longitud en una posición dentro de la cuadrícula global de píxeles utilizada por el servicio de mapas.
 
-Posteriormente:
-
-```python
-latlon_a_tile()
-```
-
-determina la tesela en la que se encuentra la coordenada.
+Posteriormente, a partir de esos valores se determina la tesela que contiene la coordenada GPS.
 
 ---
 
@@ -295,206 +317,540 @@ determina la tesela en la que se encuentra la coordenada.
 
 Una única tesela puede no proporcionar suficiente contexto alrededor de la posición GPS.
 
-Por esta razón, actualmente se descargan **9 teselas**, formando un mosaico:
+Por esta razón, con la configuración predeterminada se utiliza un radio de una tesela alrededor de la tesela central.
 
-```text
-┌────────┬────────┬────────┐
-│ Tile   │ Tile   │ Tile   │
-│  X-1,Y-1 │ X,Y-1 │ X+1,Y-1 │
-├────────┼────────┼────────┤
-│ Tile   │ Tile   │ Tile   │
-│ X-1,Y   │ X,Y   │ X+1,Y   │
-├────────┼────────┼────────┤
-│ Tile   │ Tile   │ Tile   │
-│ X-1,Y+1 │ X,Y+1 │ X+1,Y+1 │
-└────────┴────────┴────────┘
-```
-
-Esto corresponde a un mosaico:
+Esto produce un mosaico de:
 
 ```text
 3 × 3 teselas
 ```
 
-Como cada tesela tiene:
+distribuidas de la siguiente manera:
+
+```text
+┌───────────┬───────────┬───────────┐
+│ X-1,Y-1   │ X,Y-1     │ X+1,Y-1   │
+├───────────┼───────────┼───────────┤
+│ X-1,Y     │ X,Y       │ X+1,Y     │
+├───────────┼───────────┼───────────┤
+│ X-1,Y+1   │ X,Y+1     │ X+1,Y+1   │
+└───────────┴───────────┴───────────┘
+```
+
+Como cada tesela posee:
 
 ```text
 256 × 256 píxeles
 ```
 
-el resultado es una imagen de:
+el mosaico generado tiene:
 
 ```text
 768 × 768 píxeles
 ```
 
+El número de teselas puede modificarse mediante el parámetro:
+
+```text
+--radio-teselas
+```
+
 ---
 
-# Ubicación de la coordenada GPS dentro de la imagen
+# Ubicación de la coordenada GPS dentro del mosaico
 
-Una de las partes importantes del proceso es que no solamente se obtiene la imagen satelital.
-
-También se determina **exactamente en qué píxel del mosaico se encuentra la coordenada GPS promedio**.
+Además de obtener la imagen satelital, el sistema determina exactamente en qué posición del mosaico se encuentra la coordenada GPS promedio.
 
 El procedimiento es:
 
 ```text
-Latitud/Longitud promedio
+Coordenada GPS promedio
           ↓
 Píxel global
           ↓
 Origen del mosaico
           ↓
-Píxel relativo dentro del mosaico
+Píxel relativo dentro de la imagen
 ```
 
-El código calcula:
+Como resultado se obtiene una posición:
+
+```text
+(x, y)
+```
+
+que representa el punto GPS dentro de la imagen satelital.
+
+Esta posición funciona posteriormente como centro de referencia para el análisis de la vía.
+
+---
+
+# Resolución cartográfica
+
+Para convertir las mediciones realizadas sobre la imagen desde píxeles hacia metros, el sistema calcula la resolución cartográfica local.
+
+La función:
 
 ```python
-pixel_x_global
-pixel_y_global
+resolucion_metros_por_pixel()
 ```
 
-y posteriormente determina:
+calcula aproximadamente cuántos metros representa cada píxel para una latitud y nivel de zoom determinados.
 
-```python
-pixel_x
-pixel_y
+El resultado se expresa como:
+
+```text
+metros / píxel
 ```
 
-que representan la posición de la coordenada dentro de la imagen final.
+Esta relación permite convertir posteriormente las distancias detectadas en la imagen a unidades reales.
 
 ---
 
 # Marcador de posición
 
-Para facilitar la visualización y comprobación del resultado, se dibuja un marcador sobre la imagen satelital.
+Para facilitar la comprobación visual, el sistema genera una copia del mosaico satelital con la posición GPS marcada.
 
 El marcador está compuesto por:
 
 * Un círculo.
 * Una cruz.
-* Coordenadas correspondientes a la posición promedio del GPS.
+* La posición correspondiente a la coordenada promedio.
 
-De esta manera se puede verificar visualmente que la ubicación calculada corresponde a la zona donde se realizaron las mediciones.
-
----
-
-# Resultado actual
-
-El resultado de esta etapa es una imagen:
+La imagen original sin marcador también se conserva, ya que es utilizada durante el procesamiento de imagen para evitar que el marcador interfiera con la detección de bordes.
 
 ![Imagen satelital](docs/imagen_sat.png)
 
+---
 
-que contiene:
+# Etapa 4 — Estimación del ancho de la calle
 
-1. El mosaico de imágenes satelitales.
-2. La zona correspondiente a la coordenada GPS.
-3. La posición promedio de las mediciones GPS marcada sobre la imagen.
+La estimación del ancho de la vía se encuentra implementada en el módulo:
 
-El resultado permite comprobar que el sistema puede pasar desde mediciones obtenidas físicamente mediante el GPS hasta una representación geográfica de la ubicación sobre una imagen satelital.
+```text
+estimacion_ancho.py
+```
+
+Esta etapa utiliza la imagen satelital, la posición GPS y la resolución cartográfica obtenidas anteriormente.
+
+El proceso general es:
+
+```text
+Imagen satelital
+        ↓
+Región de interés alrededor del GPS
+        ↓
+Máscara aproximada de asfalto
+        ↓
+Detección de bordes
+        ↓
+Estimación de orientación de la calle
+        ↓
+Secciones transversales
+        ↓
+Medición entre bordes
+        ↓
+Conversión de píxeles a metros
+        ↓
+Filtrado de mediciones
+        ↓
+Ancho estimado
+```
 
 ---
 
-# Tecnologías utilizadas 
+# Región de interés
+
+El sistema utiliza una región circular alrededor del punto GPS para limitar la zona de análisis.
+
+El tamaño de esta región se define mediante:
+
+```text
+--roi-metros
+```
+
+Por ejemplo:
+
+```bash
+--roi-metros 20
+```
+
+establece una región de interés de aproximadamente 20 metros alrededor de la posición GPS.
+
+---
+
+# Máscara aproximada de asfalto
+
+Antes de detectar los bordes se genera una máscara que intenta conservar las superficies visualmente compatibles con la vía.
+
+Para esto se analizan características relacionadas con:
+
+* Saturación.
+* Luminosidad.
+* Cromaticidad.
+* Textura local.
+
+También se utilizan operaciones morfológicas para reducir pequeñas discontinuidades.
+
+La máscara no determina por sí sola qué región corresponde a una calle, sino que ayuda a reducir elementos como vegetación o superficies con características poco compatibles con el asfalto.
+
+---
+
+# Detección de bordes
+
+Sobre la imagen procesada se utiliza:
+
+```text
+Canny Edge Detection
+```
+
+para detectar cambios significativos de intensidad que puedan corresponder a los límites de la vía.
+
+Los umbrales utilizados por Canny pueden indicarse manualmente mediante:
+
+```text
+--canny-bajo
+--canny-alto
+```
+
+Si no se proporcionan, el sistema determina automáticamente valores a partir de las características de intensidad de la imagen.
+
+---
+
+# Estimación de la orientación de la calle
+
+Una vez detectados los bordes, se utiliza:
+
+```text
+HoughLinesP
+```
+
+para identificar segmentos de línea presentes en la imagen.
+
+Los segmentos cercanos a la posición GPS son analizados para determinar la orientación predominante de la vía.
+
+El proceso puede representarse como:
+
+```text
+Segmentos detectados
+        ↓
+Orientaciones
+        ↓
+Histograma angular
+        ↓
+Orientación dominante
+```
+
+Esta orientación representa aproximadamente la dirección longitudinal de la calle.
+
+---
+
+# Secciones transversales
+
+Una vez determinada la orientación de la calle, se obtiene una dirección perpendicular a esta.
+
+Sobre esta dirección se realizan múltiples mediciones transversales.
+
+Actualmente se utilizan:
+
+```text
+13 secciones
+```
+
+distribuidas entre aproximadamente:
+
+```text
+-6 m y +6 m
+```
+
+con respecto al punto GPS.
+
+El uso de múltiples secciones permite disminuir la dependencia de una única medición que podría verse afectada por:
+
+* Vehículos.
+* Sombras.
+* Vegetación.
+* Imperfecciones de la imagen.
+* Bordes que no correspondan a la calle.
+
+---
+
+# Medición del ancho de la calle
+
+En cada sección transversal se buscan dos bordes que puedan representar los límites opuestos de la vía.
+
+La distancia detectada inicialmente se encuentra en píxeles.
+
+Esta distancia se convierte a metros mediante la resolución cartográfica calculada anteriormente:
+
+```text
+Distancia entre bordes en píxeles
+                ×
+         Metros por píxel
+                ↓
+          Ancho en metros
+```
+
+También se verifica que la medición se encuentre dentro del intervalo de ancho permitido.
+
+Por ejemplo:
+
+```bash
+--ancho-minimo-m 3
+--ancho-maximo-m 10
+```
+
+---
+
+# Filtrado de mediciones
+
+No todas las mediciones transversales detectadas son utilizadas para obtener el resultado final.
+
+El sistema busca grupos de mediciones cuyos valores de ancho sean similares y descarta aquellas que sean inconsistentes.
+
+Para generar una estimación final se requieren al menos:
+
+```text
+3 secciones transversales consistentes
+```
+
+Una vez seleccionadas las mediciones válidas, el ancho final se obtiene mediante:
+
+```text
+Mediana de los anchos válidos
+```
+
+El uso de la mediana permite reducir la influencia de valores atípicos.
+
+---
+
+# Nivel de confianza
+
+Además del ancho estimado, el sistema calcula un valor de confianza asociado al resultado.
+
+Este valor considera principalmente:
+
+* La dispersión entre las mediciones válidas.
+* La cantidad de secciones válidas.
+* La confianza asociada a la orientación detectada.
+
+Actualmente el resultado puede clasificarse como:
+
+```text
+Alta
+Media
+Baja
+Insuficiente
+```
+
+---
+
+# Resultados generados
+
+Al ejecutar el pipeline se genera la carpeta:
+
+```text
+resultados_seac/
+```
+
+que contiene diferentes etapas del procesamiento:
+
+```text
+01_imagen_satelital.png
+02_imagen_con_gps.png
+03_contraste_grises.png
+04_mascara_asfalto.png
+05_bordes_canny.png
+06_secciones_transversales.png
+reporte.json
+```
+
+### `01_imagen_satelital.png`
+
+Mosaico original obtenido desde Esri.
+
+### `02_imagen_con_gps.png`
+
+Mosaico con la posición GPS promedio marcada.
+
+### `03_contraste_grises.png`
+
+Imagen en escala de grises utilizada durante el procesamiento.
+
+### `04_mascara_asfalto.png`
+
+Máscara aproximada de las regiones compatibles con la superficie de la vía.
+
+### `05_bordes_canny.png`
+
+Bordes detectados mediante Canny.
+
+### `06_secciones_transversales.png`
+
+Resultado visual en el que se muestran los segmentos detectados, la orientación estimada y las secciones utilizadas para calcular el ancho.
+
+---
+
+# Arquitectura modular
+
+El software se encuentra dividido en módulos independientes con responsabilidades específicas.
+
+```text
+mediciones_gps.txt
+        │
+        ▼
+┌──────────────────┐
+│      gps.py      │
+│ Procesamiento GPS│
+└────────┬─────────┘
+         │
+         │ Coordenada promedio
+         ▼
+┌──────────────────┐
+│     esri.py      │
+│ Imagen satelital │
+└────────┬─────────┘
+         │
+         │ Mosaico + resolución
+         ▼
+┌────────────────────────┐
+│ estimacion_ancho.py    │
+│ Procesamiento de imagen│
+│ y estimación del ancho │
+└───────────┬────────────┘
+            │
+            ▼
+       Ancho estimado
+```
+
+El archivo:
+
+```text
+seac_pipeline.py
+```
+
+actúa como coordinador del flujo general y utiliza las interfaces proporcionadas por cada módulo.
+
+La estructura actual del software es:
+
+```text
+SEAC/
+│
+├── seac_pipeline.py
+├── gps.py
+├── esri.py
+├── estimacion_ancho.py
+├── mediciones_gps.txt
+└── resultados_seac/
+```
+
+La separación en módulos permite modificar o sustituir un componente sin alterar la lógica interna de los demás, siempre que se mantenga la interfaz definida entre ellos.
+
+Por ejemplo, el proveedor de imágenes satelitales podría ser sustituido por otro servicio manteniendo una interfaz equivalente para obtener el mosaico y su información asociada.
+
+---
+
+# Ejecución
+
+El pipeline completo puede ejecutarse mediante:
+
+```bash
+py seac_pipeline.py mediciones_gps.txt
+```
+
+También es posible modificar diferentes parámetros del procesamiento.
+
+Por ejemplo:
+
+```bash
+py seac_pipeline.py mediciones_gps.txt --roi-metros 20 --ancho-maximo-m 10 --mostrar
+```
+
+En este caso:
+
+```text
+mediciones_gps.txt
+```
+
+corresponde al archivo que contiene las mediciones obtenidas mediante el GPS.
+
+```text
+--roi-metros 20
+```
+
+establece una región de interés de 20 metros alrededor de la posición GPS.
+
+```text
+--ancho-maximo-m 10
+```
+
+establece en 10 metros el ancho máximo considerado durante la búsqueda de los límites de la vía.
+
+```text
+--mostrar
+```
+
+permite mostrar visualmente el resultado final del procesamiento.
+
+---
+
+# Tecnologías utilizadas
 
 ## Hardware
 
-* Arduino UNO
-* Módulo GPS NEO-6M
-* Posteriormente: Raspberry Pi 4 (De ser posible)
-* Posteriormente: cámara compatible CSI o USB
+* Módulo GPS NEO-6M.
+* Raspberry Pi 4.
+* Cámara compatible CSI o USB para futuras etapas.
 
 ## Software
 
-### Arduino UNO
-
-* C/C++
-* Arduino IDE
-* `SoftwareSerial`
-* `TinyGPS++`
-
 ### Python
 
-* Python 3
-* `requests`
-* `Pillow`
-* `Matplotlib`
-* `math`
+* Python 3.
+* NumPy.
+* OpenCV.
+* Pillow.
+* `urllib`.
+* `math`.
+* `argparse`.
+* `json`.
+
+### Procesamiento de imágenes
+
+* Conversión de espacios de color.
+* Filtrado bilateral.
+* CLAHE.
+* Operaciones morfológicas.
+* Canny Edge Detection.
+* HoughLinesP.
 
 ### Datos geoespaciales
 
-* Coordenadas GPS
-* Latitud
-* Longitud
-* HDOP
-* Número de satélites
-* Web Mercator
-* Teselas (*tiles*)
-* Imágenes satelitales
-* Esri World Imagery
-* ArcGIS REST API
-
-Consultar el [tutorial de múltiples capas](https://developers.arcgis.com/openlayers/maps/raster-tile-basemaps/display-multiple-basemap-layers/) para ver la documentación oficial de Esri.
+* Coordenadas GPS.
+* Latitud.
+* Longitud.
+* HDOP.
+* Número de satélites.
+* Web Mercator.
+* Teselas (*tiles*).
+* Resolución cartográfica en metros por píxel.
+* Imágenes satelitales.
+* Esri World Imagery.
+* ArcGIS REST API.
 
 ---
 
-# Flujo actual del sistema
+# Consideraciones actuales
 
-El flujo implementado hasta este punto puede resumirse de la siguiente manera:
+La resolución calculada por el sistema corresponde a la escala cartográfica de Web Mercator para la latitud y el nivel de zoom utilizados.
 
-```text
-             NEO-6M
-                │
-                ▼
-        ┌───────────────┐
-        │    Arduino    │
-        └───────┬───────┘
-                │
-                ▼
-       Datos GPS / NMEA
-                │
-                ▼
-       Validación de datos
-                │
-        ┌───────┴────────┐
-        │                │
-   Satélites ≥ 4     HDOP ≤ 2.0
-        │                │
-        └───────┬────────┘
-                │
-                ▼
-      10 mediciones válidas
-                │
-                ▼
-             Python
-                │
-                ▼
-       Análisis estadístico
-                │
-                ▼
-       Latitud promedio
-       Longitud promedio
-                │
-                ▼
-      Conversión Lat/Lon
-       → píxel global
-                │
-                ▼
-       Conversión a Tile
-                │
-                ▼
-          3 × 3 Tiles
-                │
-                ▼
-       Mosaico 768 × 768
-                │
-                ▼
-      Ubicación GPS marcada
-                │
-                ▼
-       Imagen satelital
-```
+Esta resolución no garantiza por sí sola la resolución espacial nativa ni la precisión posicional de la fotografía satelital.
 
+Por esta razón, las estimaciones de ancho obtenidas deberán ser evaluadas posteriormente mediante su comparación con mediciones reales o valores de referencia.
+
+---
+
+# Documentación de Esri
+
+Consultar el [tutorial de múltiples capas](https://developers.arcgis.com/openlayers/maps/raster-tile-basemaps/display-multiple-basemap-layers/) para acceder a documentación relacionada con los mapas base de Esri.
 ---
