@@ -139,9 +139,30 @@ def estimar_orientacion_calle(
         for linea in cercanas
     )
     angulo = (0.5 * math.atan2(suma_seno, suma_coseno)) % math.pi
-    confianza = float(histograma[indice_dominante] / max(sum(pesos), 1e-9))
-    return angulo, confianza
 
+    peso_total = 0.0
+    peso_alineado = 0.0
+
+    for linea in candidatas:
+        distancia_m = (
+            linea["distancia_segmento_centro_px"]
+            * metros_por_pixel
+        )
+        longitud_m = linea["longitud_px"] * metros_por_pixel
+
+        peso = longitud_m / (1.0 + distancia_m / 3.0)
+
+        peso_total += peso
+
+        if diferencia_angulos(linea["angulo"], angulo) <= tolerancia:
+            peso_alineado += peso
+
+    confianza = float(
+        peso_alineado / max(peso_total, 1e-9)
+    )
+
+    #confianza = float(histograma[indice_dominante] / max(sum(pesos), 1e-9))
+    return angulo, confianza
 
 def valor_vecindad(imagen: np.ndarray, punto: np.ndarray) -> int:
     """Devuelve el maximo de una vecindad 3x3 o cero fuera de la imagen."""
@@ -331,10 +352,14 @@ def detectar_bordes_calle(
     bordes = cv2.Canny(
         contraste, canny_bajo, canny_alto, apertureSize=3, L2gradient=True
     )
+    # --------------------------
+    # Máscara de asfalto
     mascara_dilatada = cv2.dilate(
         mascara_asfalto, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     )
     bordes = cv2.bitwise_and(bordes, mascara_dilatada)
+    # --------------------------
+
     bordes = cv2.bitwise_and(bordes, mascara_roi)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     bordes_unidos = cv2.morphologyEx(bordes, cv2.MORPH_CLOSE, kernel)
@@ -414,6 +439,8 @@ def detectar_bordes_calle(
 
     ancho_estimado_m = None
     confianza = 0.0
+    consistencia = 0.0
+    cobertura = 0.0
     if len(mediciones_validas) >= 3:
         anchos = [medicion["ancho_m"] for medicion in mediciones_validas]
         ancho_estimado_m = float(np.median(anchos))
@@ -421,6 +448,7 @@ def detectar_bordes_calle(
         consistencia = max(0.0, 1.0 - dispersion / max(ancho_estimado_m, 1e-9))
         cobertura = min(1.0, len(mediciones_validas) / 5.0)
         confianza = float(consistencia * cobertura * confianza_orientacion)
+        # Condiciones de Confianza
         if confianza >= 0.55:
             nivel_confianza = "alta"
         elif confianza >= 0.30:
@@ -460,6 +488,8 @@ def detectar_bordes_calle(
         "anchos_validos_m": [float(m["ancho_m"]) for m in mediciones_validas],
         "ancho_estimado_m": ancho_estimado_m,
         "confianza": confianza,
+        "consistencia": consistencia,
+        "cobertura": cobertura,
         "nivel_confianza": nivel_confianza,
         "canny_bajo_usado": canny_bajo,
         "canny_alto_usado": canny_alto,

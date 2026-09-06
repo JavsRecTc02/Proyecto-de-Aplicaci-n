@@ -60,8 +60,25 @@ def mostrar_resumen(
         print(
             f"Ancho preliminar:          {deteccion['ancho_estimado_m']:.3f} m"
         )
+        print("-" * 62)
+        print("DESGLOSE DE CONFIANZA")
+        print("-" * 62)
+
         print(
-            f"Confianza geometrica:      {deteccion['confianza']:.3f} "
+            f"Consistencia de anchos:    "
+            f"{deteccion['consistencia']:.3f}"
+        )
+        print(
+            f"Cobertura de secciones:    "
+            f"{deteccion['cobertura']:.3f}"
+        )
+        print(
+            f"Confianza de orientacion:  "
+            f"{deteccion['confianza_orientacion']:.3f}"
+        )
+        print(
+            f"Confianza geometrica:      "
+            f"{deteccion['confianza']:.3f} "
             f"({deteccion['nivel_confianza']})"
         )
     print("=" * 62)
